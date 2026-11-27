@@ -34,6 +34,7 @@
 #
 ##########################################################################
 
+import os
 import pathlib
 import math
 import time
@@ -1631,6 +1632,68 @@ class RendererTest( GafferTest.TestCase ) :
 				},
 				maxDifference = 0.01
 			)
+
+	def testTextureCache( self ) :
+
+		directory = self.temporaryDirectory()
+		source = directory / "albedo.png"
+		cache = directory / "textureCache"
+		window = imath.Box2i( imath.V2i( 0 ), imath.V2i( 255 ) )
+		texture = IECoreImage.ImagePrimitive.createRGBFloat( imath.Color3f( 0, 1, 0 ), window, window )
+		# A constant texture would be collapsed to a single tile.
+		texture["R"][0] = 1
+		IECoreImage.ImageWriter( texture, str( source ) ).write()
+
+		def render( name, texturePath, useCache, generate ) :
+
+			renderer = self.createRenderer( extraOptions = {
+				"cycles:scene:use_texture_cache" : IECore.BoolData( useCache ),
+				"cycles:scene:auto_texture_cache" : IECore.BoolData( generate ),
+				"cycles:scene:texture_cache_path" : IECore.StringData( cache.as_posix() ),
+				"cycles:session:samples" : IECore.IntData( 1 ),
+			} )
+			output = directory / f"{name}.exr"
+			renderer.output( "beauty", IECoreScene.Output( str( output ), "exr", "rgba", {} ) )
+			shader = IECoreScene.ShaderNetwork(
+				shaders = {
+					"image" : IECoreScene.Shader( "image_texture", "cycles:shader", { "filename" : texturePath.as_posix() } ),
+					"emission" : IECoreScene.Shader( "emission", "cycles:surface", { "strength" : 1.0 } ),
+				},
+				connections = [ ( ( "image", "color" ), ( "emission", "color" ) ) ],
+				output = "emission",
+			)
+			plane = renderer.object(
+				"/plane", IECoreScene.MeshPrimitive.createPlane( imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ) ),
+				renderer.attributes( IECore.CompoundObject( { "cycles:surface" : shader } ) )
+			)
+			plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+			renderer.render()
+			self.assertEqualWithAbsError(
+				self.__colorAtUV( OpenImageIO.ImageBuf( str( output ) ), imath.V2f( 0.55 ) ),
+				imath.Color4f( 0, 1, 0, 1 ), 0.01
+			)
+
+		render( "disabled", source, False, True )
+		render( "readOnly", source, True, False )
+		self.assertEqual( list( cache.glob( "*.tx" ) ), [] )
+		render( "generate", source, True, True )
+		files = list( cache.glob( "*.tx" ) )
+		self.assertEqual( len( files ), 1 )
+		cached = OpenImageIO.ImageBuf( str( files[0] ) )
+		self.assertGreater( cached.spec().tile_width, 0 )
+		self.assertGreater( cached.spec().width, cached.spec().tile_width )
+		self.assertGreater( cached.nmiplevels, 1 )
+		mtime = files[0].stat().st_mtime_ns
+		# Cycles matches the source modification time. Change the pixels while
+		# keeping that time so the render can only be green if it uses the cache.
+		sourceTime = source.stat()
+		blue = IECoreImage.ImagePrimitive.createRGBFloat( imath.Color3f( 0, 0, 1 ), window, window )
+		IECoreImage.ImageWriter( blue, str( source ) ).write()
+		os.utime( source, ns = ( sourceTime.st_atime_ns, sourceTime.st_mtime_ns ) )
+		render( "reuse", source, True, False )
+		source.unlink()
+		render( "direct", files[0], True, False )
+		self.assertEqual( files[0].stat().st_mtime_ns, mtime )
 
 	def testShaderSubstitutions( self ) :
 

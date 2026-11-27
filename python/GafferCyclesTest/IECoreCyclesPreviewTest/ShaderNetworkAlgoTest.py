@@ -47,6 +47,8 @@ from GafferCycles import IECoreCyclesPreview as IECoreCycles
 
 class ShaderNetworkAlgoTest( unittest.TestCase ) :
 
+	__allRayVisibility = ( 1 << 7 ) - 1  # Cycles PATH_RAY_VISIBILITY_ALL
+
 	def testConvertUSDLights( self ) :
 
 		def expectedLightParameters( parameters ) :
@@ -258,7 +260,7 @@ class ShaderNetworkAlgoTest( unittest.TestCase ) :
 					} )
 				),
 
-				IECore.CompoundData( { "__USDRayVisibility" : IECore.IntData( 2039 ) } )
+				IECore.CompoundData( { "__USDRayVisibility" : IECore.IntData( self.__allRayVisibility & ~( 1 << 2 ) ) } )
 
 			],
 
@@ -281,7 +283,7 @@ class ShaderNetworkAlgoTest( unittest.TestCase ) :
 					} )
 				),
 
-				IECore.CompoundData( { "__USDRayVisibility" : IECore.IntData( 2031 ) } )
+				IECore.CompoundData( { "__USDRayVisibility" : IECore.IntData( self.__allRayVisibility & ~( 1 << 3 ) ) } )
 
 			],
 
@@ -299,7 +301,7 @@ class ShaderNetworkAlgoTest( unittest.TestCase ) :
 				IECoreCycles.ShaderNetworkAlgo.convertUSDShaders( network )
 
 				comparisonShader = shaders[1]
-				comparisonShader.blindData().update( shaders[2] if len( shaders ) == 3 else { "__USDRayVisibility" : IECore.IntData( 2047 ) } )
+				comparisonShader.blindData().update( shaders[2] if len( shaders ) == 3 else { "__USDRayVisibility" : IECore.IntData( self.__allRayVisibility ) } )
 
 				self.__assertShadersEqual( network.getShader( "light" ), comparisonShader )
 
@@ -934,7 +936,7 @@ class ShaderNetworkAlgoTest( unittest.TestCase ) :
 		self.assertIn( "cycles:surface", modifiedAttributes )
 
 		mixShader = IECoreScene.Shader( "mix_closure", "cycles:surface" )
-		mixShader.blindData()["__USDRayVisibility"] = ( 1 << 11 ) - 1  # `PATH_RAY_ALL_VISIBILITY` value from cycles/include/kernel/types.h
+		mixShader.blindData()["__USDRayVisibility"] = self.__allRayVisibility
 		meshLightSurface = IECoreScene.ShaderNetwork(
 			shaders = {
 				"mixShader" : mixShader,
