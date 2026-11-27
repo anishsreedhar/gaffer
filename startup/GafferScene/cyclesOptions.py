@@ -284,6 +284,45 @@ Gaffer.Metadata.registerValues( {
 
 	},
 
+	"option:cycles:scene:use_texture_cache" : {
+
+		"defaultValue" : True,
+		"description" :
+		"""
+		Load tiles and mip levels from compatible textures as needed during rendering.
+		""",
+		"label" : "Use Texture Cache",
+		"layout:section" : "Texture Cache",
+
+	},
+
+	"option:cycles:scene:auto_texture_cache" : {
+
+		"defaultValue" : False,
+		"description" :
+		"""
+		Generate and refresh Cycles .tx files while rendering when Use Texture Cache is on.
+		""",
+		"label" : "Auto Generate",
+		"layout:section" : "Texture Cache",
+
+	},
+
+	"option:cycles:scene:texture_cache_path" : {
+
+		"defaultValue" : "",
+		"description" :
+		"""
+		Directory for generated .tx files. An absolute path can be shared across assets.
+		Relative paths are resolved beside each source image. An empty path uses blender_tx beside the image.
+		""",
+		"label" : "Cache Directory",
+		"layout:section" : "Texture Cache",
+		"plugValueWidget:type" : "GafferUI.FileSystemPathPlugValueWidget",
+		"path:leaf" : False,
+
+	},
+
 	"option:cycles:scene:texture_limit" : {
 
 		"defaultValue" : 0,
