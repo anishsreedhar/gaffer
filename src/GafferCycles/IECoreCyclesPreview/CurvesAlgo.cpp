@@ -81,45 +81,22 @@ ccl::Hair *convertPrimary( const IECoreScene::CurvesPrimitive *curve, ccl::Scene
 		numKeys += verticesPerCurve[i];
 	}
 
-	hair->reserve_curves( numCurves, numKeys );
-
-	const vector<Imath::V3f> &points = p->readable();
-
-	if( const FloatVectorData *w = curve->variableData<FloatVectorData>( "width", PrimitiveVariable::Vertex ) )
+	hair->resize_curves( numCurves, numKeys );
+	const auto &points = p->readable();
+	auto *positions = hair->get_position_for_write();
+	auto *radii = hair->get_radius_for_write();
+	const auto *widths = curve->variableData<FloatVectorData>( "width", PrimitiveVariable::Vertex );
+	const auto *width = curve->variableData<FloatData>( "width", PrimitiveVariable::Constant );
+	const float defaultWidth = width ? width->readable() : 1.0f;
+	size_t key = 0;
+	for( size_t i = 0; i < numCurves; ++i )
 	{
-		const vector<float> &width = w->readable();
-
-		size_t key = 0;
-		for( size_t i = 0; i < numCurves; ++i )
+		hair->get_curve_first_key()[i] = key;
+		hair->get_curve_shader()[i] = 0;
+		for( int j = 0; j < verticesPerCurve[i]; ++j, ++key )
 		{
-			size_t firstKey = key;
-			for( int j = 0; j < verticesPerCurve[i]; ++j, ++key )
-			{
-				hair->add_curve_key( ccl::make_float3( points[key].x, points[key].y, points[key].z ), width[key] / 2.0f );
-			}
-
-			hair->add_curve( firstKey, 0 );
-		}
-	}
-	else
-	{
-		float constantWidth = 1.0f;
-
-		if( const FloatData *cw = curve->variableData<FloatData>( "width", PrimitiveVariable::Constant ) )
-		{
-			constantWidth = cw->readable();
-		}
-
-		size_t key = 0;
-		for( size_t i = 0; i < numCurves; ++i )
-		{
-			size_t firstKey = key;
-			for( int j = 0; j < verticesPerCurve[i]; ++j, ++key )
-			{
-				hair->add_curve_key( ccl::make_float3( points[key].x, points[key].y, points[key].z ), constantWidth / 2.0f );
-			}
-
-			hair->add_curve( firstKey, 0 );
+			positions[key] = ccl::make_float3( points[key].x, points[key].y, points[key].z );
+			radii[key] = 0.5f * ( widths ? widths->readable()[key] : defaultWidth );
 		}
 	}
 

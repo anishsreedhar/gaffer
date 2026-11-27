@@ -139,6 +139,7 @@ class Attributes : public IECoreScenePreview::Renderer::AttributesInterface
 
 		// Applies attributes relevant to `light`. Instancing is not an
 		// issue here because we never instance lights.
+		std::string lightName() const;
 		void applyLight( ccl::Light *light, ccl::Scene *scene ) const;
 
 		int getVolumePrecision() const;

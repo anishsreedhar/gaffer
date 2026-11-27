@@ -43,6 +43,7 @@
 IECORE_PUSH_DEFAULT_VISIBILITY
 #include "scene/image.h"
 #include "scene/image_vdb.h"
+#include "scene/mesh.h"
 #include "scene/pointcloud.h"
 // Cycles (for ustring)
 #include "util/param.h"
@@ -143,7 +144,7 @@ ccl::Attribute *convertTypedPrimitiveVariable( const std::string &name, const Pr
 	// space for its own usage. For instance, vertex attributes on subdivs reserve one extra element for
 	// each non-quad face.
 
-	const size_t allocatedSize = attribute->element_size( attributes.geometry, attributes.prim );
+	const size_t allocatedSize = attribute->size;
 	if( dataSize( data ) > allocatedSize )
 	{
 		msg(
@@ -162,7 +163,7 @@ ccl::Attribute *convertTypedPrimitiveVariable( const std::string &name, const Pr
 	{
 		if constexpr( std::is_same_v<T, V3fVectorData> )
 		{
-			ccl::packed_normal *pn = attribute->data_normal();
+			ccl::packed_normal *pn = attribute->data_for_write<ccl::packed_normal>();
 			for( const auto &v : data->readable() )
 			{
 				*pn++ = ccl::packed_normal( ccl::make_float3( v.x, v.y, v.z ) );
@@ -182,8 +183,8 @@ ccl::Attribute *convertTypedPrimitiveVariable( const std::string &name, const Pr
 	}
 	else if constexpr( std::is_same_v<T, V3fVectorData> || std::is_same_v<T, Color3fVectorData> )
 	{
-		// Special case for arrays of `float3`, where each element actually contains 4 floats for alignment purposes.
-		ccl::float3 *f3 = attribute->data_float3();
+		// Cycles stores three-component attributes in packed buffers.
+		ccl::packed_float3 *f3 = attribute->data_for_write<ccl::packed_float3>();
 		for( const auto &v : data->readable() )
 		{
 			*f3++ = ccl::make_float3( v.x, v.y, v.z );
@@ -192,7 +193,7 @@ ccl::Attribute *convertTypedPrimitiveVariable( const std::string &name, const Pr
 	else
 	{
 		// All other cases, (including int to float conversion) are a simple element-by-element copy.
-		std::copy( data->baseReadable(), data->baseReadable() + data->baseSize(), (float *)attribute->data() );
+		std::copy( data->baseReadable(), data->baseReadable() + data->baseSize(), static_cast<float *>( attribute->data_for_write() ) );
 	}
 
 	return attribute;
@@ -249,7 +250,7 @@ ccl::Geometry *convert( const IECoreScenePreview::Renderer::ObjectSamples &sampl
 	}
 	// Cycles expects the middle sample (rounding down for even numbers of
 	// samples) to be specified as the main sample, and the other samples to
-	// be provided via ATTR_STD_MOTION_VERTEX_POSITION.
+	// be provided as motion steps of the position attribute.
 	return it->second( samples, times, (samples.size() - 1) / 2, scene );
 }
 
@@ -392,36 +393,40 @@ void convertMotion( const IECoreScenePreview::Renderer::Samples<const IECoreScen
 		return;
 	}
 
-	geometry.set_use_motion_blur( true );
-	geometry.set_motion_steps( samples.size() );
-
-	ccl::Attribute *positionAttribute = geometry.attributes.add( ccl::ATTR_STD_MOTION_VERTEX_POSITION, ccl::ustring( "motion_P" ) );
-	ccl::float4 *positionData = positionAttribute->data_float4();
-
-	const float *radius = nullptr;
-	if( geometry.is_pointcloud() )
+	ccl::AttributeSet *attributes = &geometry.attributes;
+	if( geometry.is_mesh() )
 	{
-		radius = static_cast<const ccl::PointCloud *>( &geometry )->get_radius().data();
+		auto &mesh = static_cast<ccl::Mesh &>( geometry );
+		if( mesh.get_subdivision_type() != ccl::Mesh::SUBDIVISION_NONE )
+		{
+			attributes = &mesh.subd_attributes;
+		}
+	}
+	ccl::Attribute *position = attributes->find( ccl::ATTR_STD_POSITION );
+	for( const auto *sample : samples )
+	{
+		const auto *p = sample->variableData<V3fVectorData>( "P", PrimitiveVariable::Vertex );
+		if( !p || p->readable().size() != static_cast<size_t>( position->size ) )
+		{
+			msg( Msg::Warning, "IECoreCycles::GeometryAlgo::convertMotion", "Ignoring deformation blur because the position count changes between samples." );
+			return;
+		}
 	}
 
-	for( size_t sampleIndex = 0; sampleIndex < samples.size(); ++sampleIndex )
+	geometry.set_use_motion_blur( true );
+	geometry.set_motion_steps( samples.size() );
+	position->add_motion( &geometry );
+	for( size_t i = 0; i < samples.size(); ++i )
 	{
-		if( sampleIndex == primarySampleIndex )
-		{
-			// Cycles has a slightly odd way of representing motion samples, where the primary
-			// sample is stored in the main position attribute, and the remaining samples are
-			// stored in ATTR_STD_MOTION_VERTEX_POSITION. So we skip the primary sample here.
-			continue;
-		}
-		const V3fVectorData *pData = samples[sampleIndex]->variableData<V3fVectorData>( "P", PrimitiveVariable::Vertex );
-		if( !pData )
+		if( i == primarySampleIndex )
 		{
 			continue;
 		}
-		const std::vector<Imath::V3f> &p = pData->readable();
-		for( size_t i = 0; i < p.size(); ++i )
+		const auto &points = samples[i]->variableData<V3fVectorData>( "P", PrimitiveVariable::Vertex )->readable();
+		auto *dest = position->data_for_write<ccl::packed_float3>( position->time_step_to_attr_step( i, samples.size() ) );
+		for( const auto &p : points )
 		{
-			*positionData++ = ccl::make_float4( p[i].x, p[i].y, p[i].z, radius ? radius[i] : 0.0f );
+			*dest++ = ccl::make_float3( p.x, p.y, p.z );
 		}
 	}
 }
@@ -529,7 +534,7 @@ void convertVoxelGrids( const IECoreVDB::VDBObject *vdbObject, ccl::Volume *volu
 		params.frame = 0.0f;
 
 		std::scoped_lock lock( scene->mutex );
-		attr->data_voxel() = scene->image_manager->add_image( std::move( loader ), params, false );
+		attr->data_voxel_for_write() = scene->image_manager->add_image( std::move( loader ), params, false );
 	}
 }
 

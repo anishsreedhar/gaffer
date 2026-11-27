@@ -121,32 +121,34 @@ ccl::Mesh *convertPrimary( const IECoreScene::MeshPrimitive *mesh, ccl::Scene *s
 	const size_t numVerts = points.size();
 
 	ccl::Mesh *cmesh = SceneAlgo::createNodeWithLock<ccl::Mesh>( scene );
-	cmesh->reserve_mesh( numVerts, numFaces );
-	for( size_t i = 0; i < numVerts; i++ )
-	{
-		cmesh->add_vertex( ccl::make_float3( points[i].x, points[i].y, points[i].z ) );
-	}
-
-	if( mesh->interpolation() == "catmullClark" )
+	const bool subdivision = mesh->interpolation() == "catmullClark";
+	cmesh->resize_mesh( numVerts, subdivision ? 0 : numFaces );
+	if( subdivision )
 	{
 		cmesh->set_subdivision_type( ccl::Mesh::SUBDIVISION_CATMULL_CLARK );
-
-		const std::vector<int> &vertsPerFace = mesh->verticesPerFace()->readable();
-		size_t ncorners = 0;
-		for( size_t i = 0; i < vertsPerFace.size(); i++ )
+		const auto &vertsPerFace = mesh->verticesPerFace()->readable();
+		cmesh->resize_subd_faces( numFaces, vertexIds.size() );
+		auto *position = cmesh->subd_attributes.add( ccl::ATTR_STD_POSITION );
+		position->resize( numVerts );
+		auto *dest = position->data_for_write<ccl::packed_float3>();
+		for( const auto &p : points )
 		{
-			ncorners += vertsPerFace[i];
+			*dest++ = ccl::make_float3( p.x, p.y, p.z );
 		}
-		cmesh->reserve_subd_faces( numFaces, ncorners );
 
-		int indexOffset = 0;
-		for( size_t i = 0; i < vertsPerFace.size(); i++ )
+		std::copy( vertexIds.begin(), vertexIds.end(), cmesh->get_subd_face_corners().begin() );
+		int corner = 0;
+		int ptex = 0;
+		for( size_t i = 0; i < numFaces; ++i )
 		{
-			cmesh->add_subd_face(
-				const_cast<int*>(&vertexIds[indexOffset]), vertsPerFace[i],
-				/* shader = */ 0, /* smooth = */ true
-			);
-			indexOffset += vertsPerFace[i];
+			const int n = vertsPerFace[i];
+			cmesh->get_subd_start_corner()[i] = corner;
+			cmesh->get_subd_num_corners()[i] = n;
+			cmesh->get_subd_ptex_offset()[i] = ptex;
+			cmesh->get_subd_shader()[i] = 0;
+			cmesh->get_subd_smooth()[i] = true;
+			corner += n;
+			ptex += n == 4 ? 1 : n;
 		}
 
 		// Creases
@@ -185,14 +187,14 @@ ccl::Mesh *convertPrimary( const IECoreScene::MeshPrimitive *mesh, ccl::Scene *s
 	}
 	else
 	{
-		const bool smooth = hasSmoothNormals( mesh );
-		for( size_t i = 0; i < vertexIds.size(); i+= 3 )
+		auto *dest = cmesh->get_position_for_write();
+		for( const auto &p : points )
 		{
-			cmesh->add_triangle(
-				vertexIds[i], vertexIds[i+1], vertexIds[i+2],
-				/* shader = */ 0, /* smooth = */ smooth
-			);
+			*dest++ = ccl::make_float3( p.x, p.y, p.z );
 		}
+		std::copy( vertexIds.begin(), vertexIds.end(), cmesh->get_triangles().begin() );
+		std::fill( cmesh->get_shader().begin(), cmesh->get_shader().end(), 0 );
+		std::fill( cmesh->get_smooth().begin(), cmesh->get_smooth().end(), hasSmoothNormals( mesh ) );
 	}
 
 	// Convert primitive variables.
@@ -233,21 +235,6 @@ ccl::Mesh *convertPrimary( const IECoreScene::MeshPrimitive *mesh, ccl::Scene *s
 			default :
 				break;
 		}
-	}
-
-	// \todo This works around subdivision bugs in Cycles. Remove once bugs are fixed there.
-	if( cmesh->get_subdivision_type() == ccl::Mesh::SUBDIVISION_CATMULL_CLARK )
-	{
-		// A Catmull-Clark mesh shouldn't need vertex normals, but Cycles has a code path
-		// that calls `add_vertex_normals()`, which crashes when run from a previously
-		// tessellated mesh. So we call this up-front to avoid the crash.
-		cmesh->add_vertex_normals();
-		// Add `ATTR_STD_GENERATED` to prevent Cycles from crashing when generating it
-		// from a previously tessellated mesh. If we want to match Blender, this should
-		// be generated from a rest pose and normalised 0-1. The below matches Cycles'
-		// fallback behaviour when `ATTR_STD_GENERATED` is not provided by the host.
-		ccl::Attribute *generated = cmesh->subd_attributes.add( ccl::ATTR_STD_GENERATED );
-		std::copy_n( cmesh->get_verts().data(), cmesh->get_verts().size(), generated->data_float3() );
 	}
 
 	return cmesh;
