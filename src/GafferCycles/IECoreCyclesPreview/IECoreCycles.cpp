@@ -34,6 +34,8 @@
 
 #include "GafferCycles/IECoreCyclesPreview/IECoreCycles.h"
 
+#include "LightAlgo.h"
+
 // Cycles
 #include "util/log.h"
 #include "util/path.h"
@@ -335,87 +337,31 @@ IECore::CompoundDataPtr lightData()
 	IECore::CompoundDataPtr result = new IECore::CompoundData();
 	IECore::CompoundDataMap &lights = result->writable();
 
-	const ccl::NodeType *cNodeType = ccl::NodeType::find( ccl::ustring( "light" ) );
-	if( cNodeType )
+	for( const auto &type : IECoreCycles::LightAlgo::types() )
 	{
-		IECore::CompoundDataPtr _sockets = getSockets( cNodeType, false );
-		IECore::CompoundDataMap _in = _sockets->readable();
-
-		const ccl::SocketType *socketType = cNodeType->find_input( ccl::ustring( "light_type" ) );
-		const ccl::NodeEnum *enums = socketType->enum_values;
-
-		int portalEnum = -1;
-
-		for( auto it = enums->begin(), eIt = enums->end(); it != eIt; ++it )
+		IECore::CompoundDataPtr inputs = new IECore::CompoundData();
+		for( const auto &input : type.nodeType->inputs )
 		{
-			IECore::CompoundDataPtr light = new IECore::CompoundData();
-			IECore::CompoundDataMap &l = light->writable();
-			IECore::CompoundDataPtr sockets = new IECore::CompoundData();
-			IECore::CompoundDataMap &in = sockets->writable();
-
-			std::string type( it->first.c_str() );
-			type += "_light";
-
-			in["size"] = _in["size"]->copy();
-			in["cast_shadow"] = _in["cast_shadow"]->copy();
-			in["use_mis"] = _in["use_mis"]->copy();
-			in["use_caustics"] = _in["use_caustics"]->copy();
-			in["max_bounces"] = _in["max_bounces"]->copy();
-			in["strength"] = _in["strength"]->copy();
-
-			if( type == "background_light" )
+			std::string name = input.name.string();
+			if( name == "radius" )
 			{
-				in["map_resolution"] = _in["map_resolution"]->copy();
-				l["in"] = std::move( sockets );
-				l["enum"] = new IECore::IntData( it->second );
-				lights[type] = std::move( light );
+				name = "size";
 			}
-			else if( type == "area_light" )
+			else if( type.type == ccl::LIGHT_SPOT && name == "angle" )
 			{
-				in["sizeu"] = _in["sizeu"]->copy();
-				in["sizev"] = _in["sizev"]->copy();
-				in["spread"] = _in["spread"]->copy();
-				l["in"] = std::move( sockets );
-				l["enum"] = new IECore::IntData( it->second );
-				portalEnum = it->second;
-				lights["disk_light"] = light->copy();
-				lights["quad_light"] = light->copy();
+				name = "spot_angle";
 			}
-			else if( type == "spot_light" )
+			else if( type.type == ccl::LIGHT_SPOT && name == "smooth" )
 			{
-				in["spot_angle"] = _in["spot_angle"]->copy();
-				in["spot_smooth"] = _in["spot_smooth"]->copy();
-				in["is_sphere"] = _in["is_sphere"]->copy();
-				l["in"] = std::move( sockets );
-				l["enum"] = new IECore::IntData( it->second );
-				lights[type] = std::move( light );
+				name = "spot_smooth";
 			}
-			else if( type == "point_light" )
-			{
-				in["is_sphere"] = _in["is_sphere"]->copy();
-				l["in"] = std::move( sockets );
-				l["enum"] = new IECore::IntData( it->second );
-				lights[type] = std::move( light );
-			}
-			else
-			{
-				l["in"] = std::move( sockets );
-				l["enum"] = new IECore::IntData( it->second );
-				lights[type] = std::move( light );
-			}
+			inputs->writable()[name] = socket( input );
 		}
-		// Portal
-		IECore::CompoundDataPtr light = new IECore::CompoundData();
-		IECore::CompoundDataMap &l = light->writable();
-		IECore::CompoundDataPtr sockets = new IECore::CompoundData();
-		IECore::CompoundDataMap &in = sockets->writable();
 
-		in["is_portal"] = _in["is_portal"]->copy();
-		in["sizeu"] = _in["sizeu"]->copy();
-		in["sizev"] = _in["sizev"]->copy();
-		l["enum"] = new IECore::IntData( portalEnum );
-		l["in"] = std::move( sockets );
-		lights["portal"] = std::move( light );
+		IECore::CompoundDataPtr light = new IECore::CompoundData();
+		light->writable()["in"] = std::move( inputs );
+		light->writable()["enum"] = new IECore::IntData( type.type );
+		lights[type.name] = std::move( light );
 	}
 	return result;
 }

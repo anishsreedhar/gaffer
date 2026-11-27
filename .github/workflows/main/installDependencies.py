@@ -37,6 +37,7 @@
 import os
 import pathlib
 import sys
+import re
 import argparse
 import hashlib
 import subprocess
@@ -110,6 +111,17 @@ else:
 		shutil.move( str( p ), args.dependenciesDir )
 
 	extractedPath.rmdir()
+
+# Build the renderer SDK against the same VFX libraries used by Gaffer.
+# Some dependency distributions deliberately omit Cycles.
+cyclesVersion = pathlib.Path( args.dependenciesDir ) / "cycles/include/util/version.h"
+if cyclesVersion.is_file() :
+	majorMinor = dict( re.findall( r"^#define CYCLES_VERSION_(MAJOR|MINOR) (\d+)$", cyclesVersion.read_text(), re.M ) )
+	if majorMinor != { "MAJOR" : "5", "MINOR" : "3" } :
+		subprocess.check_call(
+			[ sys.executable, str( pathlib.Path( __file__ ).resolve().parents[3] / "config/buildCycles.py" ),
+				"--dependenciesDir", args.dependenciesDir ], stdout = sys.stderr,
+		)
 
 # Tell the world
 

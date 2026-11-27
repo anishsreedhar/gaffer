@@ -48,6 +48,7 @@
 #include "OIIOOutputDriver.h"
 #include "PointInstancer.h"
 #include "SceneAlgo.h"
+#include "LightAlgo.h"
 
 #include "IECoreScene/Camera.h"
 #include "IECoreScene/MeshPrimitive.h"
@@ -729,8 +730,8 @@ class CyclesLight : public IECoreScenePreview::Renderer::ObjectInterface
 
 	public :
 
-		CyclesLight( ccl::Scene *scene, const std::string &name, NodeDeleter *nodeDeleter )
-			:	m_scene( scene ), m_light( SceneAlgo::createNodeWithLock<ccl::Light>( scene ), NodeDeleter::GeometryDeleter( nodeDeleter ) ), m_object( SceneAlgo::createNodeWithLock<ccl::Object>( scene ), NodeDeleter::ObjectDeleter( nodeDeleter ) )
+		CyclesLight( ccl::Scene *scene, const std::string &name, const Attributes *attributes, NodeDeleter *nodeDeleter )
+			:	m_scene( scene ), m_light( LightAlgo::type( attributes->lightName() ).create( scene ), NodeDeleter::GeometryDeleter( nodeDeleter ) ), m_object( SceneAlgo::createNodeWithLock<ccl::Object>( scene ), NodeDeleter::ObjectDeleter( nodeDeleter ) )
 		{
 			m_object->set_geometry( m_light.get() );
 			m_object->set_random_id( std::hash<string>()( name ) );
@@ -762,6 +763,11 @@ class CyclesLight : public IECoreScenePreview::Renderer::ObjectInterface
 		bool attributes( const IECoreScenePreview::Renderer::AttributesInterface *attributes ) override
 		{
 			const Attributes *cyclesAttributes = static_cast<const Attributes *>( attributes );
+			if( LightAlgo::type( cyclesAttributes->lightName() ).nodeType != m_light->type )
+			{
+				// Ask the render controller to recreate the light with its new geometry type.
+				return false;
+			}
 			cyclesAttributes->applyLight( m_light.get(), m_scene );
 			cyclesAttributes->applyObject( m_object.get(), m_scene );
 			applyEnvironmentMapRotation();
@@ -1244,6 +1250,9 @@ IECore::InternedString g_useBvhUnalignedNodesOptionName( "cycles:scene:use_bvh_u
 IECore::InternedString g_numBvhTimeStepsOptionName( "cycles:scene:num_bvh_time_steps" );
 IECore::InternedString g_hairSubdivisionsOptionName( "cycles:scene:hair_subdivisions" );
 IECore::InternedString g_hairShapeOptionName( "cycles:scene:hair_shape" );
+IECore::InternedString g_useTextureCacheOptionName( "cycles:scene:use_texture_cache" );
+IECore::InternedString g_autoTextureCacheOptionName( "cycles:scene:auto_texture_cache" );
+IECore::InternedString g_textureCachePathOptionName( "cycles:scene:texture_cache_path" );
 IECore::InternedString g_textureLimitOptionName( "cycles:scene:texture_limit" );
 // Background shader
 IECore::InternedString g_backgroundShaderOptionName( "cycles:background:shader" );
@@ -1251,13 +1260,13 @@ IECore::InternedString g_backgroundShaderOptionName( "cycles:background:shader" 
 IECore::InternedString g_seedOptionName( "cycles:integrator:seed" );
 IECore::InternedString g_denoiserTypeOptionName( "cycles:integrator:denoiser_type" );
 
-const boost::container::flat_map<std::string, ccl::PathRayFlag> g_rayTypes = {
-	{ "camera", ccl::PATH_RAY_CAMERA },
-	{ "diffuse", ccl::PATH_RAY_DIFFUSE },
-	{ "glossy", ccl::PATH_RAY_GLOSSY },
-	{ "transmission", ccl::PATH_RAY_TRANSMIT },
-	{ "shadow", ccl::PATH_RAY_SHADOW },
-	{ "scatter", ccl::PATH_RAY_VOLUME_SCATTER }
+const boost::container::flat_map<std::string, ccl::PathRayVisibilityFlag> g_rayTypes = {
+	{ "camera", ccl::PATH_RAY_VISIBILITY_CAMERA },
+	{ "diffuse", ccl::PATH_RAY_VISIBILITY_DIFFUSE },
+	{ "glossy", ccl::PATH_RAY_VISIBILITY_GLOSSY },
+	{ "transmission", ccl::PATH_RAY_VISIBILITY_TRANSMIT },
+	{ "shadow", ccl::PATH_RAY_VISIBILITY_SHADOW },
+	{ "scatter", ccl::PATH_RAY_VISIBILITY_VOLUME_SCATTER }
 };
 
 const boost::container::flat_map<int, ccl::LogLevel> g_logLevels = {
@@ -1399,7 +1408,7 @@ class CyclesRenderer final : public IECoreScenePreview::Renderer
 			}
 			else
 			{
-				result = new CyclesLight( m_scene, name, m_nodeDeleter.get() );
+				result = new CyclesLight( m_scene, name, typedAttributes, m_nodeDeleter.get() );
 			}
 			result->attributes( attributes );
 			return result;
@@ -1655,6 +1664,9 @@ class CyclesRenderer final : public IECoreScenePreview::Renderer
 			params.use_bvh_unaligned_nodes = optionValue<bool>( g_useBvhUnalignedNodesOptionName, params.use_bvh_unaligned_nodes, modified );
 			params.num_bvh_time_steps = optionValue<int>( g_numBvhTimeStepsOptionName, params.num_bvh_time_steps, modified );
 			params.hair_subdivisions = optionValue<int>( g_hairSubdivisionsOptionName, params.hair_subdivisions, modified );
+			params.use_texture_cache = optionValue<bool>( g_useTextureCacheOptionName, params.use_texture_cache, modified );
+			params.auto_texture_cache = optionValue<bool>( g_autoTextureCacheOptionName, params.auto_texture_cache, modified );
+			params.texture_cache_path = optionValue<string>( g_textureCachePathOptionName, params.texture_cache_path, modified );
 			params.texture_limit = optionValue<int>( g_textureLimitOptionName, params.texture_limit, modified );
 			params.shadingsystem = nameToShadingSystemEnum( optionValue<string>( g_shadingsystemOptionName, "OSL", modified ) );
 			return params;
@@ -1788,7 +1800,7 @@ class CyclesRenderer final : public IECoreScenePreview::Renderer
 				it->second.modified = false;
 			}
 
-			uint32_t backgroundVisibility = ccl::PATH_RAY_ALL_VISIBILITY;
+			uint32_t backgroundVisibility = ccl::PATH_RAY_VISIBILITY_ALL;
 			for( const auto &[name, rayType] : g_rayTypes )
 			{
 				if( !optionValue<bool>( "cycles:background:visibility:" + name, true ) )

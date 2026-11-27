@@ -75,7 +75,7 @@ struct NodeDeleter
 
 		void operator()( T *node ) const
 		{
-			if( m_nodeDeleter )
+			if( node && m_nodeDeleter )
 			{
 				m_nodeDeleter->scheduleDeletion( node );
 			}

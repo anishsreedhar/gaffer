@@ -547,7 +547,7 @@ void ShaderCache::clearUnused()
 //////////////////////////////////////////////////////////////////////////
 
 Attributes::Attributes( const IECore::CompoundObject *attributes, ShaderCache *shaderCache )
-	:	m_visibility( ~0 ),
+	:	m_visibility( ccl::PATH_RAY_VISIBILITY_OBJECT_ALL ),
 		m_useHoldout( false ),
 		m_isShadowCatcher( false ),
 		m_shadowTerminatorShadingOffset( 0.0f ),
@@ -573,12 +573,12 @@ Attributes::Attributes( const IECore::CompoundObject *attributes, ShaderCache *s
 	IECore::ConstCompoundObjectPtr modifiedAttributes = ShaderNetworkAlgo::convertUSDMeshLightAttributes( attributes );
 	attributes = modifiedAttributes.get();
 
-	updateVisibility( g_cameraVisibilityAttributeName,       (int)ccl::PATH_RAY_CAMERA,         attributes );
-	updateVisibility( g_diffuseVisibilityAttributeName,      (int)ccl::PATH_RAY_DIFFUSE,        attributes );
-	updateVisibility( g_glossyVisibilityAttributeName,       (int)ccl::PATH_RAY_GLOSSY,         attributes );
-	updateVisibility( g_transmissionVisibilityAttributeName, (int)ccl::PATH_RAY_TRANSMIT,       attributes );
-	updateVisibility( g_shadowVisibilityAttributeName,       (int)ccl::PATH_RAY_SHADOW,         attributes );
-	updateVisibility( g_scatterVisibilityAttributeName,      (int)ccl::PATH_RAY_VOLUME_SCATTER, attributes );
+	updateVisibility( g_cameraVisibilityAttributeName,       (int)ccl::PATH_RAY_VISIBILITY_CAMERA,         attributes );
+	updateVisibility( g_diffuseVisibilityAttributeName,      (int)ccl::PATH_RAY_VISIBILITY_DIFFUSE,        attributes );
+	updateVisibility( g_glossyVisibilityAttributeName,       (int)ccl::PATH_RAY_VISIBILITY_GLOSSY,         attributes );
+	updateVisibility( g_transmissionVisibilityAttributeName, (int)ccl::PATH_RAY_VISIBILITY_TRANSMIT,       attributes );
+	updateVisibility( g_shadowVisibilityAttributeName,       (int)ccl::PATH_RAY_VISIBILITY_SHADOW,         attributes );
+	updateVisibility( g_scatterVisibilityAttributeName,      (int)ccl::PATH_RAY_VISIBILITY_VOLUME_SCATTER, attributes );
 
 	m_useHoldout = attributeValue<bool>( g_useHoldoutAttributeName, attributes, m_useHoldout );
 	m_isShadowCatcher = attributeValue<bool>( g_isShadowCatcherAttributeName, attributes, m_isShadowCatcher );
@@ -630,7 +630,7 @@ Attributes::Attributes( const IECore::CompoundObject *attributes, ShaderCache *s
 		{
 			// If the light has been converted from a USD light, we override diffuse and glossy visibility
 			// based on the USD light's diffuse and specular parameters. See ShaderNetworkAlgo::transferUSDLightParameters()
-			constexpr int rayMask = (int)( ccl::PATH_RAY_DIFFUSE | ccl::PATH_RAY_GLOSSY );
+			constexpr int rayMask = (int)( ccl::PATH_RAY_VISIBILITY_DIFFUSE | ccl::PATH_RAY_VISIBILITY_GLOSSY );
 			m_visibility = ( m_visibility & ~rayMask ) | ( rayVisibility->readable() & rayMask );
 		}
 	}
@@ -821,6 +821,11 @@ void Attributes::applyShader( ccl::Geometry *geometry, ccl::Scene *scene ) const
 			}
 		}
 	}
+}
+
+std::string Attributes::lightName() const
+{
+	return m_lightAttribute && m_lightAttribute->outputShader() ? m_lightAttribute->outputShader()->getName() : "point_light";
 }
 
 void Attributes::applyLight( ccl::Light *light, ccl::Scene *scene ) const

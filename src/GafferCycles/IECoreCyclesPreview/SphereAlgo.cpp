@@ -81,8 +81,10 @@ ccl::Geometry *convert( const IECoreScenePreview::Renderer::Samples<const IECore
 	warnIfUnsupported( sphere );
 	ccl::PointCloud *pointcloud = SceneAlgo::createNodeWithLock<ccl::PointCloud>( scene );
 
-	pointcloud->reserve( 1 );
-	pointcloud->add_point( ccl::make_float3( 0.0f, 0.0f, 0.0f ), sphere->radius(), 0);
+	pointcloud->resize( 1 );
+	pointcloud->get_position_for_write()[0] = ccl::zero_float3();
+	pointcloud->get_radius_for_write()[0] = sphere->radius();
+	pointcloud->get_shader()[0] = 0;
 
 	for( const auto &[name, variable] : sphere->variables )
 	{

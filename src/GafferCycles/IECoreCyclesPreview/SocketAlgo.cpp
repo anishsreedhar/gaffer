@@ -187,7 +187,7 @@ void setFloat3Socket( ccl::Node *node, const ccl::SocketType &socket, const IECo
 template<typename T>
 void setFloat3ArraySocket( ccl::Node *node, const ccl::SocketType &socket, const T &value )
 {
-	ccl::array<ccl::float3> array( value.size() );
+	ccl::array<ccl::packed_float3> array( value.size() );
 	for( size_t i = 0; i < value.size(); ++i )
 	{
 		array[i] = ccl::make_float3( value[i][0], value[i][1], value[i][2] );
@@ -537,7 +537,7 @@ void setRampSocket( ccl::Node *node, const ccl::SocketType *socket, const IECore
 {
 	IECore::SplinefColor3f evaluator = ramp.evaluator();
 
-	ccl::array<ccl::float3> rampTable( RAMP_TABLE_SIZE );
+	ccl::array<ccl::packed_float3> rampTable( RAMP_TABLE_SIZE );
 	for (int i = 0; i < RAMP_TABLE_SIZE; i++)
 	{
 		Color3f solve = evaluator( (float)i / (float)(RAMP_TABLE_SIZE - 1) );
@@ -668,6 +668,11 @@ IECore::DataPtr getSocket( const ccl::Node *node, const ccl::SocketType *socket 
 			return new IntData( node->get_int( *socket ) );
 		case ccl::SocketType::FLOAT :
 			return new FloatData( node->get_float( *socket ) );
+		case ccl::SocketType::FLOAT_ARRAY :
+		{
+			const auto &values = node->get_float_array( *socket );
+			return new FloatVectorData( std::vector<float>( values.begin(), values.end() ) );
+		}
 		case ccl::SocketType::ENUM :
 			return new StringData( node->get_string( *socket ).string() );
 		default :

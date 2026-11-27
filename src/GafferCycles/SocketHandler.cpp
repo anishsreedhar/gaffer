@@ -37,6 +37,8 @@
 
 #include "GafferCycles/SocketHandler.h"
 
+#include "IECoreCyclesPreview/LightAlgo.h"
+
 #include "GafferCycles/IECoreCyclesPreview/SocketAlgo.h"
 
 #include "GafferOSL/ClosurePlug.h"
@@ -528,7 +530,7 @@ void setupLightPlugs( const std::string &shaderName, Gaffer::GraphComponent *plu
 	// Make sure we have a plug to represent each socket, reusing plugs wherever possible.
 
 	std::set<const Plug *> validPlugs;
-	const ccl::NodeType *nodeType = ccl::NodeType::find( ccl::ustring( "light" ) );
+	const ccl::NodeType *nodeType = LightAlgo::type( shaderName ).nodeType;
 
 	if( shaderName != "portal" )
 	{
@@ -548,22 +550,14 @@ void setupLightPlugs( const std::string &shaderName, Gaffer::GraphComponent *plu
 	}
 	else if( shaderName == "spot_light" )
 	{
-		validPlugs.insert( setupPlug( nodeType, *(nodeType->find_input( ccl::ustring( "size" ) )), plugsParent, Gaffer::Plug::In ) );
-		const ccl::SocketType *angleSocket = nodeType->find_input( ccl::ustring( "spot_angle" ) );
-		validPlugs.insert(
-			setupNumericPlug<FloatPlug>(
-				nodeType, *angleSocket, plugsParent, Gaffer::Plug::In,
-				// Cycles API uses radians, but that isn't user-friendly so we convert to degrees.
-				// We convert back to radians in the renderer backend.
-				IECore::radiansToDegrees( *static_cast<const float *>( angleSocket->default_value ) )
-			)
-		);
-		validPlugs.insert( setupPlug( nodeType, *(nodeType->find_input( ccl::ustring( "spot_smooth" ) )), plugsParent, Gaffer::Plug::In ) );
+		validPlugs.insert( setupTypedPlug<FloatPlug>( "size", plugsParent, Gaffer::Plug::In, 0.0f ) );
+		validPlugs.insert( setupTypedPlug<FloatPlug>( "spot_angle", plugsParent, Gaffer::Plug::In, 45.0f ) );
+		validPlugs.insert( setupTypedPlug<FloatPlug>( "spot_smooth", plugsParent, Gaffer::Plug::In, 0.0f ) );
 		validPlugs.insert( setupPlug( nodeType, *(nodeType->find_input( ccl::ustring( "is_sphere" ) )), plugsParent, Gaffer::Plug::In ) );
 	}
 	else if( shaderName == "point_light" )
 	{
-		validPlugs.insert( setupPlug( nodeType, *(nodeType->find_input( ccl::ustring( "size" ) )), plugsParent, Gaffer::Plug::In ) );
+		validPlugs.insert( setupTypedPlug<FloatPlug>( "size", plugsParent, Gaffer::Plug::In, 0.0f ) );
 		validPlugs.insert( setupPlug( nodeType, *(nodeType->find_input( ccl::ustring( "is_sphere" ) )), plugsParent, Gaffer::Plug::In ) );
 	}
 	else if( shaderName == "disk_light" )

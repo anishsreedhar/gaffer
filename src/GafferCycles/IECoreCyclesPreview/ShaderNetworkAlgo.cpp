@@ -68,6 +68,7 @@ IECORE_POP_DEFAULT_VISIBILITY
 #include "fmt/format.h"
 
 #include <filesystem>
+#include <set>
 #include <unordered_map>
 
 using namespace std;
@@ -195,27 +196,32 @@ ccl::ShaderNode *convertWalk( const ShaderNetwork::Parameter &outputParameter, c
 				ccl::ImageTextureNode *imgTexNode = (ccl::ImageTextureNode*)node;
 				if( offset != string::npos )
 				{
-					// Workaround to find all available tiles
-					string baseFileName = fileName.substr( 0, offset );
-					vector<string> files;
-					const std::filesystem::path path( ccl::path_dirname( pathFileName ) );
-					for( const auto &d : std::filesystem::directory_iterator( path ) )
+					// Discover only sources matching the entire pattern. A Cycles cache
+					// can contain .tx sidecars whose names also start with the tile number.
+					const string prefix = fileName.substr( 0, offset );
+					const string suffix = fileName.substr( offset + 6 );
+					std::filesystem::path directory = std::filesystem::path( pathFileName ).parent_path();
+					std::error_code error;
+					std::set<int> tileNumbers;
+					for( const auto &entry : std::filesystem::directory_iterator( directory.empty() ? "." : directory, error ) )
 					{
-						if( std::filesystem::is_regular_file( d.status() ) || std::filesystem::is_symlink( d.status() ) )
+						const string name = entry.path().filename().string();
+						if( name.size() != prefix.size() + 4 + suffix.size() || !name.starts_with( prefix ) || !name.ends_with( suffix ) )
 						{
-							string foundFile = d.path().stem().string();
-							if( baseFileName == ( foundFile.substr( 0, offset ) ) )
+							continue;
+						}
+						const string number = name.substr( offset, 4 );
+						if( number.find_first_not_of( "0123456789" ) == string::npos && entry.is_regular_file( error ) )
+						{
+							const int tile = std::stoi( number );
+							if( tile >= 1001 )
 							{
-								files.push_back( foundFile );
+								tileNumbers.insert( tile );
 							}
 						}
 					}
-
-					ccl::array<int> tiles;
-					for( string file : files )
-					{
-						tiles.push_back_slow( atoi( file.substr( offset, offset+3 ).c_str() ) );
-					}
+					ccl::array<int> tiles( tileNumbers.size() );
+					std::copy( tileNumbers.begin(), tileNumbers.end(), tiles.begin() );
 					imgTexNode->set_tiles( tiles );
 				}
 				imgTexNode->set_filename( ccl::ustring( pathFileName ) );
@@ -521,44 +527,13 @@ void convertLight( const IECoreScene::ShaderNetwork *light, ccl::Light *cyclesLi
 		return;
 	}
 
-	// Convert type
-
-	if( lightShader->getName() == "spot_light" )
+	if( cyclesLight->is_area_light() )
 	{
-		cyclesLight->set_light_type( ccl::LIGHT_SPOT );
-	}
-	else if( lightShader->getName() == "distant_light" )
-	{
-		cyclesLight->set_light_type( ccl::LIGHT_DISTANT );
-	}
-	else if( lightShader->getName() == "background_light" )
-	{
-		cyclesLight->set_light_type( ccl::LIGHT_BACKGROUND );
-	}
-	else if(
-		lightShader->getName() == "quad_light" ||
-		lightShader->getName() == "portal"
-	)
-	{
-		cyclesLight->set_light_type( ccl::LIGHT_AREA );
-		cyclesLight->set_size( 1.0f );
-		cyclesLight->set_sizeu( 2.0f );
-		cyclesLight->set_sizev( 2.0f );
-
-		cyclesLight->set_ellipse( false );
-	}
-	else if( lightShader->getName() == "disk_light" )
-	{
-		cyclesLight->set_light_type( ccl::LIGHT_AREA );
-		cyclesLight->set_size( 1.0f );
-		cyclesLight->set_sizeu( 2.0f );
-		cyclesLight->set_sizev( 2.0f );
-
-		cyclesLight->set_ellipse( true );
-	}
-	else
-	{
-		cyclesLight->set_light_type( ccl::LIGHT_POINT );
+		auto *area = static_cast<ccl::AreaLight *>( cyclesLight );
+		area->set_sizeu( 2.0f );
+		area->set_sizev( 2.0f );
+		area->set_ellipse( lightShader->getName() == "disk_light" );
+		area->set_is_portal( lightShader->getName() == "portal" );
 	}
 
 	// Convert parameters
@@ -571,30 +546,25 @@ void convertLight( const IECoreScene::ShaderNetwork *light, ccl::Light *cyclesLi
 		}
 
 		// Convert angle-based parameters, where we use degrees and Cycles uses radians.
-		else if( name == "angle" )
+		else if( name == "angle" || name == "spot_angle" || name == "spread" )
 		{
-			cyclesLight->set_angle( IECore::degreesToRadians( parameterValue<float>( value.get(), name, 0.0f ) ) );
-		}
-		else if( name == "spot_angle" )
-		{
-			cyclesLight->set_spot_angle( IECore::degreesToRadians( parameterValue<float>( value.get(), name, 45.0f ) ) );
-		}
-		else if( name == "spread" )
-		{
-			cyclesLight->set_spread( IECore::degreesToRadians( parameterValue<float>( value.get(), name, 180.0f ) ) );
-		}
-		else if( name == "width" )
-		{
-			cyclesLight->set_sizeu( parameterValue<float>( value.get(), name, 2.0f ) );
-			// No oval support yet, just apply width to height.
-			if( lightShader->getName() == "disk_light" )
+			const std::string socket = name == "spot_angle" ? "angle" : name.string();
+			if( const auto *input = cyclesLight->type->find_input( ccl::ustring( socket ) ) )
 			{
-				cyclesLight->set_sizev( parameterValue<float>( value.get(), name, 2.0f ) );
+				cyclesLight->set( *input, IECore::degreesToRadians( parameterValue<float>( value.get(), name, 0.0f ) ) );
 			}
 		}
-		else if( name == "height" )
+		else if( name == "size" || name == "spot_smooth" )
 		{
-			cyclesLight->set_sizev( parameterValue<float>( value.get(), name, 2.0f ) );
+			SocketAlgo::setSocket( cyclesLight, name == "size" ? "radius" : "smooth", value.get() );
+		}
+		else if( name == "width" || name == "height" )
+		{
+			SocketAlgo::setSocket( cyclesLight, name == "width" ? "sizeu" : "sizev", value.get() );
+			if( name == "width" && lightShader->getName() == "disk_light" )
+			{
+				SocketAlgo::setSocket( cyclesLight, "sizev", value.get() );
+			}
 		}
 		// Convert generic parameters.
 		else
@@ -954,14 +924,14 @@ void transferCommonUSDLightParameters( const Shader *usdShader, Shader *shader )
 	}
 	shader->parameters()[g_colorParameter] = new Color3fData( color );
 
-	int visibility = (int)ccl::PATH_RAY_ALL_VISIBILITY;
+	int visibility = (int)ccl::PATH_RAY_VISIBILITY_ALL;
 	if( parameterValue( usdShader, g_diffuseParameter, 1.0f ) == 0.0f )
 	{
-		visibility &= ~(int)ccl::PATH_RAY_DIFFUSE;
+		visibility &= ~(int)ccl::PATH_RAY_VISIBILITY_DIFFUSE;
 	}
 	if( parameterValue( usdShader, g_specularParameter, 1.0f ) == 0.0f )
 	{
-		visibility &= ~(int)ccl::PATH_RAY_GLOSSY;
+		visibility &= ~(int)ccl::PATH_RAY_VISIBILITY_GLOSSY;
 	}
 	shader->blindData()->writable()[g_USDRayVisibilityBlindDataKey] = new IntData( visibility );
 
