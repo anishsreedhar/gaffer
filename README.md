@@ -80,6 +80,16 @@ In this example we're going to build gaffer to a `gaffer-build` directory next t
 ./config/installDependencies.sh ../gaffer-build
 ```
 
+For bundles that include Cycles, the installer upgrades the renderer SDK to Cycles 5.3.0 using the bundle's VFX libraries. Building the SDK requires CMake and a C++20 compiler. NVIDIA kernel builds also need a compatible CUDA toolkit and OptiX headers. To rebuild from a local copy of the official source ZIP, use the following command.
+
+```sh
+python config/buildCycles.py --dependenciesDir ../gaffer-build --archive /path/to/cycles-5.3.0.zip
+```
+
+For a local Windows CPU build, run this from an x64 Visual Studio developer prompt with `--no-gpu-binaries`. For an existing Ninja toolchain, set `CMAKE_GENERATOR=Ninja`.
+
+In Gaffer, **CyclesOptions → Texture Cache** controls tiled texture reads. **Use Texture Cache** is on by default. Enable **Auto Generate** to create or refresh `.tx` files during a render. Set **Cache Directory** to an absolute path for a shared cache, or leave it empty to use a `blender_tx` directory beside each source texture.
+
 You can then build Gaffer itself:
 
 ```bash
